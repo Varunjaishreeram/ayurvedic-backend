@@ -3,7 +3,7 @@ import os
 from flask import Flask, g, current_app
 from flask_bcrypt import Bcrypt
 # Removed: from flask_login import LoginManager
-from flask_cors import CORS
+from flask_cors import CORS # Make sure CORS is imported
 from config import config_by_name, CurrentConfig # Import CurrentConfig too
 from pymongo import MongoClient
 from bson import ObjectId
@@ -21,7 +21,7 @@ def get_db():
         g.db_client = MongoClient(mongo_uri)
         db_name = current_app.config.get('MONGO_DB_NAME')
         if not db_name:
-                raise ValueError("MONGO_DB_NAME not set in the configuration")
+             raise ValueError("MONGO_DB_NAME not set in the configuration")
         g.db = g.db_client[db_name]
     return g.db
 
@@ -51,31 +51,15 @@ def create_app(config_name=None):
     bcrypt.init_app(app)
     # Removed: login_manager.init_app(app)
 
-    # --- Configure CORS ---
-    local_frontend = app.config.get('FRONTEND_URL')
-    vercel_frontend = app.config.get('VERCEL_FRONTEND_URL')
-
-    allowed_origins = []
-    if local_frontend:
-        allowed_origins.append(local_frontend)
-    if vercel_frontend:
-        allowed_origins.append(vercel_frontend)
-        # Optional: Add preview URL pattern if needed
-        # allowed_origins.append(r"https://.*-your-vercel-team\.vercel\.app")
-
-    if not allowed_origins:
-        print("WARNING: No specific CORS origins set. Allowing all - review security.")
-        allowed_origins = "*" # Fallback, less secure
-
-    print(f"Configuring CORS for origins: {allowed_origins}")
-
+    # --- Configure CORS to Allow All Origins ---
+    # WARNING: Using origins="*" with supports_credentials=True is insecure
+    # and potentially problematic. List specific origins for production.
+    print("WARNING: Configuring CORS to allow all origins ('*'). Review security implications.")
     CORS(
         app,
-        origins=allowed_origins,
-        # Set supports_credentials based on whether you need cookies for *other* reasons (like CSRF if added later)
-        # For pure JWT in headers, it can often be False, but True is safer if unsure.
-        supports_credentials=True,
-        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        origins="*", # Allow requests from ANY origin
+        supports_credentials=True, # Allow cookies/auth headers to be sent
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], # Allowed methods
         # Ensure 'Authorization' header is allowed for JWT
         allow_headers=["Content-Type", "Authorization", "X-Requested-With"]
     )
