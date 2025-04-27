@@ -1,6 +1,6 @@
 Flask
 Flask-Bcrypt
-Flask-Login
+
 Flask-Cors
 python-dotenv
 requests
@@ -9,3 +9,5 @@ gunicorn
 pymongo[srv]
 Werkzeug
 setuptools
+PyJWT 
+    

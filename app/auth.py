@@ -1,58 +1,65 @@
 # app/auth.py
-from flask import Blueprint, request, jsonify, current_app, make_response
-from flask_login import login_user, logout_user, login_required, current_user
-from .models import User
-from . import get_db # <-- CORRECTED IMPORT
+from flask import Blueprint, request, jsonify, current_app, g
+# Removed Flask-Login imports
+from .models import User # Keep User model if used for structure/methods
+from . import get_db
 from bson import ObjectId
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
+import jwt # Import PyJWT
+from .decorators import token_required # Import the token decorator
 
 auth_bp = Blueprint('auth', __name__)
-
-# --- Routes remain the same ---
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
     db = get_db()
     data = request.get_json()
-    if not data:
-        return jsonify({'message': 'No input data provided'}), 400
+    if not data: return jsonify({'message': 'No input data provided'}), 400
 
     username = data.get('username')
     email = data.get('email')
     password = data.get('password')
 
+    # Basic Validation
     if not username or not email or not password:
-        return jsonify({'message': 'Missing required fields (username, email, password)'}), 400
-
+        return jsonify({'message': 'Missing required fields'}), 400
     if len(password) < 6:
-         return jsonify({'message': 'Password must be at least 6 characters long'}), 400
+            return jsonify({'message': 'Password must be at least 6 characters'}), 400
+    # Add more validation as needed (e.g., email format)
 
+    # Check existing user
     if db.users.find_one({"email": email}):
         return jsonify({'message': 'Email already exists'}), 409
-
     if db.users.find_one({"username": username}):
         return jsonify({'message': 'Username already exists'}), 409
 
     try:
         hashed_password = generate_password_hash(password)
         user_doc = {
-            'username': username,
-            'email': email,
+            'username': username, 'email': email,
             'password_hash': hashed_password,
             'created_at': datetime.datetime.utcnow()
         }
         result = db.users.insert_one(user_doc)
         user_id = str(result.inserted_id)
 
-        new_user_obj = User(id=user_id, username=username, email=email, password_hash=hashed_password, created_at=user_doc['created_at'])
+        # --- Generate JWT Token on Signup ---
+        token_payload = {
+            'user_id': user_id,
+            'username': username,
+            'exp': datetime.datetime.utcnow() + current_app.config['JWT_EXPIRATION_DELTA']
+        }
+        secret_key = current_app.config['SECRET_KEY']
+        token = jwt.encode(token_payload, secret_key, algorithm="HS256")
 
-        login_user(new_user_obj, remember=True)
-        current_app.logger.info(f"User {new_user_obj.username} created and logged in.")
+        current_app.logger.info(f"User {username} created successfully.")
 
+        # Return token and basic user info
         return jsonify({
             'message': 'User created successfully',
-            'user': new_user_obj.to_dict()
+            'access_token': token,
+            'user': {'id': user_id, 'username': username, 'email': email}
         }), 201
     except Exception as e:
         current_app.logger.error(f"Error creating user: {str(e)}")
@@ -63,8 +70,7 @@ def signup():
 def login():
     db = get_db()
     data = request.get_json()
-    if not data:
-        return jsonify({'message': 'No input data provided'}), 400
+    if not data: return jsonify({'message': 'No input data provided'}), 400
 
     identifier = data.get('identifier')
     password = data.get('password')
@@ -72,49 +78,56 @@ def login():
     if not identifier or not password:
         return jsonify({'message': 'Missing identifier or password'}), 400
 
-    user_data = db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
+    # Find user by email or username
+    user_data = db.users.find_one(
+        {"$or": [{"email": identifier}, {"username": identifier}]},
+        # Projection to get necessary fields including password hash
+        {"_id": 1, "username": 1, "email": 1, "password_hash": 1}
+    )
 
-    if user_data:
-        user_obj = User(
-            id=str(user_data['_id']),
-            username=user_data.get('username'),
-            email=user_data.get('email'),
-            password_hash=user_data.get('password_hash'),
-            created_at=user_data.get('created_at')
-        )
+    if user_data and check_password_hash(user_data.get('password_hash', ''), password):
+        try:
+            user_id_str = str(user_data['_id'])
+            username_str = user_data.get('username')
 
-        if user_obj.check_password(password):
-            remember_session = data.get('remember', True)
-            login_user(user_obj, remember=remember_session)
-            current_app.logger.info(f'User {user_obj.username} logged in successfully.')
+            # --- Generate JWT Token ---
+            token_payload = {
+                'user_id': user_id_str,
+                'username': username_str,
+                'exp': datetime.datetime.utcnow() + current_app.config['JWT_EXPIRATION_DELTA']
+            }
+            secret_key = current_app.config['SECRET_KEY']
+            token = jwt.encode(token_payload, secret_key, algorithm="HS256")
+
+            current_app.logger.info(f'User {username_str} logged in successfully.')
             return jsonify({
                 'message': 'Login successful',
-                'user': user_obj.to_dict()
+                'access_token': token,
+                'user': {
+                        'id': user_id_str,
+                        'username': username_str,
+                        'email': user_data.get('email')
+                    }
             }), 200
-        else:
-            current_app.logger.warning(f'Failed login attempt for identifier: {identifier} - Incorrect password')
-            return jsonify({'message': 'Invalid credentials'}), 401
+        except Exception as e:
+                current_app.logger.error(f"Error generating token during login: {e}")
+                return jsonify({"message": "Error during login process"}), 500
     else:
-        current_app.logger.warning(f'Failed login attempt for identifier: {identifier} - User not found')
+        current_app.logger.warning(f'Failed login attempt for identifier: {identifier}')
         return jsonify({'message': 'Invalid credentials'}), 401
 
-@auth_bp.route('/logout', methods=['POST'])
-@login_required
-def logout():
-    username = current_user.username
-    logout_user()
-    current_app.logger.info(f'User {username} logged out.')
-    response = make_response(jsonify({'message': 'Logout successful'}), 200)
-    return response
+# Removed: Logout Route (handled client-side)
+# Removed: Status Route (handled client-side or via /me)
 
-
-@auth_bp.route('/status', methods=['GET'])
-def session_status():
-    """Check if a user session is active and return user info."""
-    if current_user.is_authenticated:
-        return jsonify({
-            'logged_in': True,
-            'user': current_user.to_dict()
-        }), 200
+# --- Protected Route to Get User Info ---
+@auth_bp.route('/me', methods=['GET'])
+@token_required # Use the decorator
+def get_current_user_info():
+    """Returns information about the currently authenticated user via token."""
+    # The user data dictionary is attached to g.current_user by the decorator
+    if hasattr(g, 'current_user') and g.current_user:
+        # Return the user info dictionary directly
+        return jsonify(g.current_user), 200
     else:
-        return jsonify({'logged_in': False}), 200
+        # Should not happen if decorator works, but include for safety
+        return jsonify({'message': 'Could not identify user from token'}), 401

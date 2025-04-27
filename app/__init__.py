@@ -2,17 +2,14 @@
 import os
 from flask import Flask, g, current_app
 from flask_bcrypt import Bcrypt
-from flask_login import LoginManager
-from flask_cors import CORS # Make sure CORS is imported
-from config import config_by_name
+# Removed: from flask_login import LoginManager
+from flask_cors import CORS
+from config import config_by_name, CurrentConfig # Import CurrentConfig too
 from pymongo import MongoClient
 from bson import ObjectId
 
 bcrypt = Bcrypt()
-login_manager = LoginManager()
-login_manager.login_view = 'auth.login'
-login_manager.login_message_category = 'info'
-login_manager.session_protection = "strong"
+# Removed: login_manager = LoginManager()
 
 # --- MongoDB Helper ---
 def get_db():
@@ -22,9 +19,9 @@ def get_db():
         if not mongo_uri:
             raise ValueError("MONGO_URI not set in the configuration")
         g.db_client = MongoClient(mongo_uri)
-        db_name = current_app.config.get('MONGO_DB_NAME') # Get DB name from config
+        db_name = current_app.config.get('MONGO_DB_NAME')
         if not db_name:
-             raise ValueError("MONGO_DB_NAME not set in the configuration")
+                raise ValueError("MONGO_DB_NAME not set in the configuration")
         g.db = g.db_client[db_name]
     return g.db
 
@@ -34,26 +31,7 @@ def close_db(e=None):
     if db_client is not None:
         db_client.close()
 
-@login_manager.user_loader
-def load_user(user_id):
-    """Loads user object from MongoDB based on user_id string."""
-    try:
-        db = get_db()
-        user_data = db.users.find_one({'_id': ObjectId(user_id)})
-        if user_data:
-            from .models import User
-            user = User(
-                id=str(user_data['_id']),
-                username=user_data.get('username'),
-                email=user_data.get('email'),
-                password_hash=user_data.get('password_hash'),
-                created_at=user_data.get('created_at')
-            )
-            return user
-    except (ObjectId.InvalidId, Exception) as e:
-        current_app.logger.error(f"Error loading user {user_id}: {e}")
-        return None
-    return None
+# Removed: @login_manager.user_loader
 
 def create_app(config_name=None):
     """Application Factory Function"""
@@ -61,6 +39,7 @@ def create_app(config_name=None):
         config_name = os.getenv('FLASK_ENV', 'default')
 
     app = Flask(__name__, instance_relative_config=True)
+    # Load configuration object directly
     app.config.from_object(config_by_name[config_name])
 
     try:
@@ -70,45 +49,54 @@ def create_app(config_name=None):
 
     # Initialize extensions
     bcrypt.init_app(app)
-    login_manager.init_app(app)
+    # Removed: login_manager.init_app(app)
 
     # --- Configure CORS ---
-    # WARNING: Using origins="*" with supports_credentials=True is insecure.
-    # It's better to list specific origins like your Vercel URL and localhost.
-    # Example: origins=["http://localhost:5173", "https://your-app.vercel.app"]
+    local_frontend = app.config.get('FRONTEND_URL')
+    vercel_frontend = app.config.get('VERCEL_FRONTEND_URL')
+
+    allowed_origins = []
+    if local_frontend:
+        allowed_origins.append(local_frontend)
+    if vercel_frontend:
+        allowed_origins.append(vercel_frontend)
+        # Optional: Add preview URL pattern if needed
+        # allowed_origins.append(r"https://.*-your-vercel-team\.vercel\.app")
+
+    if not allowed_origins:
+        print("WARNING: No specific CORS origins set. Allowing all - review security.")
+        allowed_origins = "*" # Fallback, less secure
+
+    print(f"Configuring CORS for origins: {allowed_origins}")
+
     CORS(
         app,
-        # Allows requests from ANY origin. Use specific origins for better security.
-        origins="*",
-        # Allows cookies and credentials to be sent with requests
+        origins=allowed_origins,
+        # Set supports_credentials based on whether you need cookies for *other* reasons (like CSRF if added later)
+        # For pure JWT in headers, it can often be False, but True is safer if unsure.
         supports_credentials=True,
-        # Specify allowed HTTP methods
         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         # Specify allowed headers (adjust as needed)
+        # Ensure 'Authorization' header is allowed for JWT
         allow_headers=["Content-Type", "Authorization", "X-Requested-With"]
     )
-    # Note: The 'resources' argument is an alternative way to configure per-route CORS.
-    # Using the main CORS() arguments applies settings globally unless overridden.
-    # CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True) # This line is equivalent if only /api/* needs CORS
 
     # Register teardown function to close DB connection
     app.teardown_appcontext(close_db)
 
     with app.app_context():
-        # Check MongoDB connection during app creation
+        # Check MongoDB connection
         try:
             client = get_db().client
             client.admin.command('ping')
             current_app.logger.info("MongoDB connection successful.")
         except Exception as e:
             current_app.logger.error(f"MongoDB connection check failed: {e}")
-            # Consider raising an exception depending on severity
 
         # Import and register Blueprints
         from .auth import auth_bp
         from .payments import payments_bp
         from .orders import orders_bp
-        from .routes import main_bp
+        from .routes import main_bp # Ensure this doesn't have conflicting name
 
         app.register_blueprint(main_bp, url_prefix='/api')
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
