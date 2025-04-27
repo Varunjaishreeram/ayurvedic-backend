@@ -1,0 +1,36 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+*/venv/
+*/.venv/
+*/env/
+*/ENV/
+
+# Environment variables
+.env
+*.env
+
+# Instance Folder (if not needed in repo)
+instance/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db

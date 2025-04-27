@@ -1,0 +1,11 @@
+Flask
+Flask-Bcrypt
+Flask-Login
+Flask-Cors
+python-dotenv
+requests
+razorpay
+gunicorn
+pymongo[srv]
+Werkzeug
+setuptools
