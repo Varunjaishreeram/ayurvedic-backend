@@ -1,15 +1,14 @@
-# app/__init__.py
+# backend/app/__init__.py
 import os
 from flask import Flask, g, current_app
 from flask_bcrypt import Bcrypt
-# Removed: from flask_login import LoginManager
-from flask_cors import CORS # Make sure CORS is imported
-from config import config_by_name, CurrentConfig # Import CurrentConfig too
+from flask_cors import CORS
+from config import config_by_name, CurrentConfig
 from pymongo import MongoClient
 from bson import ObjectId
+import datetime # Import datetime
 
 bcrypt = Bcrypt()
-# Removed: login_manager = LoginManager()
 
 # --- MongoDB Helper ---
 def get_db():
@@ -31,7 +30,6 @@ def close_db(e=None):
     if db_client is not None:
         db_client.close()
 
-# Removed: @login_manager.user_loader
 
 def create_app(config_name=None):
     """Application Factory Function"""
@@ -49,18 +47,14 @@ def create_app(config_name=None):
 
     # Initialize extensions
     bcrypt.init_app(app)
-    # Removed: login_manager.init_app(app)
 
-    # --- Configure CORS to Allow All Origins ---
-    # WARNING: Using origins="*" with supports_credentials=True is insecure
-    # and potentially problematic. List specific origins for production.
-    print("WARNING: Configuring CORS to allow all origins ('*'). Review security implications.")
+    # --- Configure CORS ---
+    print("INFO: Configuring CORS...")
     CORS(
         app,
-        origins="*", # Allow requests from ANY origin
-        supports_credentials=True, # Allow cookies/auth headers to be sent
-        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], # Allowed methods
-        # Ensure 'Authorization' header is allowed for JWT
+        origins="*", # Consider restricting this in production! e.g., [CurrentConfig.FRONTEND_URL, CurrentConfig.VERCEL_FRONTEND_URL]
+        supports_credentials=True,
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-Requested-With"]
     )
 
@@ -71,7 +65,8 @@ def create_app(config_name=None):
         # Check MongoDB connection
         try:
             client = get_db().client
-            client.admin.command('ping')
+            # The ismaster command is cheap and does not require auth.
+            client.admin.command('ismaster')
             current_app.logger.info("MongoDB connection successful.")
         except Exception as e:
             current_app.logger.error(f"MongoDB connection check failed: {e}")
@@ -80,11 +75,13 @@ def create_app(config_name=None):
         from .auth import auth_bp
         from .payments import payments_bp
         from .orders import orders_bp
-        from .routes import main_bp # Ensure this doesn't have conflicting name
+        from .routes import main_bp
+        from .admin import admin_bp # <-- IMPORT Admin Blueprint
 
         app.register_blueprint(main_bp, url_prefix='/api')
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(payments_bp, url_prefix='/api/payments')
         app.register_blueprint(orders_bp, url_prefix='/api/orders')
+        app.register_blueprint(admin_bp, url_prefix='/api/admin') # <-- REGISTER Admin Blueprint
 
     return app

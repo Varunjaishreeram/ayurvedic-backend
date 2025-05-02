@@ -1,9 +1,10 @@
-# app/decorators.py
+# backend/app/decorators.py
 import jwt
 from functools import wraps
 from flask import request, jsonify, current_app, g
 from bson import ObjectId
 from . import get_db # Use relative import within the app package
+import datetime # Import datetime
 
 def token_required(f):
     """
@@ -39,10 +40,10 @@ def token_required(f):
                     return jsonify({'message': 'Token payload invalid (missing user_id)'}), 401
 
             db = get_db()
-            # Select only necessary fields if desired
+            # Select necessary fields including isAdmin
             current_user_data = db.users.find_one(
                 {'_id': ObjectId(user_id)},
-                {'_id': 1, 'username': 1, 'email': 1} # Projection: only get these fields
+                {'_id': 1, 'username': 1, 'email': 1, 'isAdmin': 1} # <-- FETCH isAdmin
             )
 
             if current_user_data is None:
@@ -52,6 +53,8 @@ def token_required(f):
             # Convert _id to string for consistency if needed downstream
             current_user_data['_id'] = str(current_user_data['_id'])
             current_user_data['id'] = current_user_data['_id'] # Add 'id' field
+            # Ensure isAdmin is included, default to False if missing
+            current_user_data['isAdmin'] = current_user_data.get('isAdmin', False)
 
             # Attach user data dictionary to Flask's g for this request context
             g.current_user = current_user_data
@@ -71,4 +74,19 @@ def token_required(f):
         # Call the original route function with the authenticated user available in g
         return f(*args, **kwargs)
     return decorated_function
-    
+
+# --- NEW: Decorator specifically for Admins ---
+def admin_required(f):
+    """
+    Decorator to ensure the user is an admin. Must be used AFTER @token_required.
+    Relies on g.current_user being set by @token_required.
+    """
+    @wraps(f)
+    @token_required # Requires a valid token first
+    def decorated_function(*args, **kwargs):
+        if not hasattr(g, 'current_user') or not g.current_user or not g.current_user.get('isAdmin'):
+            current_app.logger.warning(f"Non-admin user access attempt: User ID {g.current_user.get('id', 'Unknown') if hasattr(g, 'current_user') else 'Unknown'}")
+            return jsonify({'message': 'Admin privileges required'}), 403 # Forbidden
+        # User has a valid token AND is an admin
+        return f(*args, **kwargs)
+    return decorated_function
